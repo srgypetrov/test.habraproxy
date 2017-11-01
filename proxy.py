@@ -28,8 +28,10 @@ class ChunkedResponse(object):
         headers = {}
         for line in self.raw_headers.decode('utf8').splitlines():
             if ':' in line:
-                k, v = line.split(b':', maxsplit=1)
+                k, v = line.split(':', maxsplit=1)
                 headers[k] = v.strip()
+            else:
+                headers[line] = None
         return headers
 
     def unpack_data(self):
@@ -48,7 +50,7 @@ class ChunkedResponse(object):
         yield b'0\r\n\r\n'
 
     def __iter__(self):
-        yield self.headers + b'\r\n\r\n'
+        yield self.raw_headers + b'\r\n\r\n'
         for chunk in self.get_chunks():
             yield chunk
 
