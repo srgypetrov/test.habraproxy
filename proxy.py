@@ -129,7 +129,6 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         return b''.join(headers)
 
     def get_response(self, content):
-        logging.debug(content.splitlines()[0].decode('utf8'))
         try:
             response = HTMLChunkedResponse(content)
         except ChunkedResponseError:
@@ -144,6 +143,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         if headers:
             logging.debug(headers.splitlines()[0].decode('utf8'))
             content = self.get_content(headers)
+            logging.debug(content.splitlines()[0].decode('utf8'))
             response = self.get_response(content)
             for chunk in response:
                 self.wfile.write(chunk)
