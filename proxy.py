@@ -5,7 +5,9 @@ import socket
 import socketserver
 import ssl
 
+from collections import UserDict
 from contextlib import contextmanager
+from copy import copy
 
 
 HOST, PORT = "localhost", 9090
@@ -92,69 +94,118 @@ class HTMLChunkedResponse(ChunkedResponse):
         return data.decode('utf8'), count
 
 
-class ProxyHandler(socketserver.StreamRequestHandler):
+class Headers(UserDict):
 
-    target_host = 'habrahabr.ru'
-    local_host = '{}:{}'.format(HOST, PORT)
-    bufsize = 2048
+    def __init__(self, headers_list):
+        super().__init__()
+        for line in headers_list:
+            line = line.decode('utf8')
+            if ':' in line:
+                k, v = line.split(':', maxsplit=1)
+                self[k] = v.strip()
+            else:
+                self['general'] = line
 
-    def continue_obtain(self, chunk):
-        if b'\r\n0\r\n' in chunk:
-            return False
-        if chunk.endswith(b'\r\n\r\n'):
-            if b'Content-Length' not in chunk and b'Transfer-Encoding' not in chunk:
-                return False
-        return True
-
-    def get_content(self, headers):
-        chunks = []
-        with self.ssl_socket() as sock:
-            sock.send(headers)
-            obtaining = True
-            while obtaining:
-                received = sock.recv(self.bufsize)
-                chunks.append(received)
-                obtaining = self.continue_obtain(received)
-        return b''.join(chunks)
-
-    def get_headers(self):
-        headers = []
-        while b'\r\n' not in headers:
-            received = self.rfile.readline()
+    @classmethod
+    def from_rfile(cls, rfile):
+        header_list = []
+        while True:
+            received = rfile.readline()
             if not received:
                 break
-            if received == b'Host: %s\r\n' % self.local_host.encode('utf8'):
-                received = b'Host: %s\r\n' % self.target_host.encode('utf8')
-            headers.append(received)
-        return b''.join(headers)
+            header_list.append(received)
+            if received == b'\r\n':
+                break
+        return cls(header_list)
 
-    def get_response(self, content):
-        try:
-            response = HTMLChunkedResponse(content)
-        except ChunkedResponseError:
-            try:
-                response = ChunkedResponse(content)
-            except ChunkedResponseError:
-                response = [content]
-        return response
 
-    def handle(self):
-        headers = self.get_headers()
-        if headers:
-            logging.debug(headers.splitlines()[0].decode('utf8'))
-            content = self.get_content(headers)
-            logging.debug(content.splitlines()[0].decode('utf8'))
-            response = self.get_response(content)
-            for chunk in response:
-                self.wfile.write(chunk)
+class Request(object):
+
+    target_host = 'habrahabr.ru'
+
+    def __init__(self, request_headers):
+        self.headers = copy(request_headers)
+        self.headers['Host'] = self.target_host
+
+    def make_request(self):
+        with self.get_rfile() as (rfile, wfile):
+            wfile.write(self.headers)
+            response_headers = Headers.from_rfile(rfile)
+            if 'Content-Length' in response_headers:
+                return self.get_data(response_headers, rfile)
+            elif 'Transfer-Encoding' in response_headers:
+                return self.get_chunked_data(response_headers, rfile)
+            else:
+                return Response(response_headers)
 
     @contextmanager
-    def ssl_socket(self):
+    def get_rfile(self):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)
         ssl_sock.connect((self.target_host, 443))
-        yield ssl_sock
+        rfile = ssl_sock.makefile('rb')
+        wfile = ssl_sock.makefile('wb')
+        yield rfile, wfile
+        rfile.close()
+        wfile.close()
         ssl_sock.close()
+
+
+class Response(object):
+
+    def __init__(self, headers, data=None):
+        pass
+
+
+class ProxyHandler(socketserver.StreamRequestHandler):
+
+    # target_host = 'habrahabr.ru'
+    # local_host = '{}:{}'.format(HOST, PORT)
+    # bufsize = 2048
+
+    # def continue_obtain(self, chunk):
+    #     if b'\r\n0\r\n' in chunk:
+    #         return False
+    #     if chunk.endswith(b'\r\n\r\n'):
+    #         if b'Content-Length' in chunk:
+    #             return
+    #         elif b'Transfer-Encoding' not in chunk:
+    #             return False
+    #     return True
+
+    # def get_content(self, request_headers):
+    #     chunks = []
+    #     with self.get_rfile() as sock:
+    #         sock.send(request_headers)
+    #         obtaining = True
+    #         while obtaining:
+    #             received = sock.recv(self.bufsize)
+    #             chunks.append(received)
+    #             obtaining = self.continue_obtain(received)
+    #     return b''.join(chunks)
+
+    # def get_response(self, content):
+    #     try:
+    #         response = HTMLChunkedResponse(content)
+    #     except ChunkedResponseError:
+    #         try:
+    #             response = ChunkedResponse(content)
+    #         except ChunkedResponseError:
+    #             response = [content]
+    #     return response
+
+    def handle(self):
+        headers = Headers.from_rfile(self.rfile)
+        if headers:
+            request = Request(headers)
+            logging.debug(request.headers['general'])
+            response = request.make_request()
+            logging.debug(response.headers['general'])
+
+            # content = self.get_content(request_headers)
+            # response = self.get_response(content)
+            # for chunk in response:
+            #     self.wfile.write(chunk)
 
     # def sdfsdf(self):
     #     re.sub(b'>([^<>\s]{6})<', 'repl', 'string')
