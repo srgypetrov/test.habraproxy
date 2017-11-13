@@ -25,18 +25,18 @@ class Headers(UserDict):
         for line in headers_list:
             line = line.decode('utf8')
             if ':' in line:
-                k, v = line.split(':', maxsplit=1)
-                self[k] = v.strip()
+                key, value = line.split(':', maxsplit=1)
+                self[key] = value.strip()
             else:
                 self['general'] = line.strip()
 
     def __bytes__(self):
         lines = []
-        for k, v in self.items():
-            if k == 'general':
-                line = v
+        for key, value in self.items():
+            if key == 'general':
+                line = value
             else:
-                line = '{}: {}'.format(k, v)
+                line = '{}: {}'.format(key, value)
             lines.append(line)
         lines.append('\r\n')
         return '\r\n'.join(lines).encode('utf8')
@@ -58,9 +58,10 @@ class Request(object):
         self.headers = copy(request_headers)
         self.headers['Host'] = TARGET_ADDR[0]
 
-    def get_data(self, response_headers, rfile):
-        cl = int(response_headers['Content-Length'])
-        data = rfile.read(cl)
+    @staticmethod
+    def get_data(response_headers, rfile):
+        length = int(response_headers['Content-Length'])
+        data = rfile.read(length)
         return Response(response_headers, data)
 
     def get_chunked_data(self, response_headers, rfile):
@@ -72,7 +73,8 @@ class Request(object):
             chunk_size = self.get_chunk_size(rfile)
         return Response(response_headers, b''.join(chunks), len(chunks))
 
-    def get_chunk_size(self, rfile):
+    @staticmethod
+    def get_chunk_size(rfile):
         hex_chunk_size = rfile.readline()
         if hex_chunk_size == b'\r\n':
             hex_chunk_size = rfile.readline()
@@ -89,7 +91,8 @@ class Request(object):
             return Response(response_headers)
 
     @contextmanager
-    def get_rfile(self):
+    @staticmethod
+    def get_rfile():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)
         ssl_sock.connect(TARGET_ADDR)
@@ -108,6 +111,7 @@ class Response(object):
         self.packed_data = data
         self.chunks_count = chunks_count
         self.unpack_data()
+        self._data = None
 
     def __iter__(self):
         yield bytes(self.headers)
@@ -119,7 +123,7 @@ class Response(object):
 
     @property
     def data(self):
-        return getattr(self, '_data', None)
+        return self._data
 
     @data.setter
     def data(self, value):
@@ -181,10 +185,11 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         data = self.wrap_words(data)
         return data
 
-    def fix_links(self, data):
+    @staticmethod
+    def fix_links(data):
         link = '{}://{}'.format(socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
         pattern = r'(<[^<>]*)({})([^<>]*>)'.format(re.escape(link))
-        repl = '\g<1>http://{}:{}\g<3>'.format(*LOCAL_ADDR)
+        repl = r'\g<1>http://{}:{}\g<3>'.format(*LOCAL_ADDR)
         return re.sub(pattern, repl, data, flags=re.I)
 
     def wrap_words(self, data):
@@ -192,7 +197,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         return data
 
 
-if __name__ == "__main__":
+def main():
     server = socketserver.TCPServer(LOCAL_ADDR, ProxyHandler)
     logging.basicConfig(
         format='%(message)s | %(asctime)s | %(levelname)s',
@@ -205,3 +210,7 @@ if __name__ == "__main__":
         server.serve_forever()
     except KeyboardInterrupt:
         server.server_close()
+
+
+if __name__ == "__main__":
+    main()
