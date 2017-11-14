@@ -1,6 +1,5 @@
 import gzip
 import logging
-import re
 import socket
 import socketserver
 import ssl
@@ -8,10 +7,48 @@ import ssl
 from collections import UserDict
 from contextlib import contextmanager
 from copy import copy
+from html.parser import HTMLParser
 
 
-LOCAL_ADDR = ('localhost', 9090)
+LOCAL_ADDR = ('localhost', 9999)
 TARGET_ADDR = ('habrahabr.ru', 443)
+
+
+class ProxyHTMLParser(HTMLParser):
+
+    def __init__(self, callbacks=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.data_enabled = True
+        self.starttag_end_index = 0
+        self.callbacks = callbacks or {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script', 'style'):
+            self.data_enabled = False
+        if tag in self.callbacks:
+            lineno, start_pos, end_pos = self.get_pos(with_end=True)
+            self.callbacks[tag](attrs, lineno, start_pos, end_pos)
+
+    def handle_data(self, data):
+        if 'data' in self.callbacks and self.data_enabled and data.strip():
+            lineno, start_pos = self.get_pos()
+            self.callbacks['data'](data, lineno, start_pos)
+
+    def handle_endtag(self, tag):
+        if tag in ('script', 'style'):
+            self.data_enabled = True
+
+    def get_pos(self, with_end=False):
+        lineno, start_pos = self.getpos()
+        if with_end:
+            line_index = self.rawdata.rindex('\n', 0, self.starttag_end_index) + 1
+            end_pos = self.starttag_end_index - line_index
+            return lineno, start_pos, end_pos
+        return lineno, start_pos
+
+    def parse_starttag(self, i):
+        self.starttag_end_index = self.check_for_whole_start_tag(i)
+        return super().parse_starttag(i)
 
 
 class ResponseError(Exception):
@@ -90,8 +127,8 @@ class Request(object):
                 return self.get_chunked_data(response_headers, rfile)
             return Response(response_headers)
 
-    @contextmanager
     @staticmethod
+    @contextmanager
     def get_rfile():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ssl_sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)
@@ -107,11 +144,11 @@ class Request(object):
 class Response(object):
 
     def __init__(self, headers, data=None, chunks_count=0):
+        self._data = None
         self.headers = headers
         self.packed_data = data
         self.chunks_count = chunks_count
         self.unpack_data()
-        self._data = None
 
     def __iter__(self):
         yield bytes(self.headers)
@@ -157,16 +194,23 @@ class Response(object):
         return gzipped and is_html and self.packed_data is not None
 
     def pack_data(self):
-        if self.is_chunked() and self.is_gzipped_html():
+        if self.is_gzipped_html():
             self.packed_data = gzip.compress(self.data.encode('utf8'))
 
     def unpack_data(self):
-        if self.is_chunked() and self.is_gzipped_html():
+        if self.is_gzipped_html():
             data = gzip.decompress(self.packed_data)
             self._data = data.decode('utf8')
 
 
 class ProxyHandler(socketserver.StreamRequestHandler):
+
+    def __init__(self, *args, **kwargs):
+        self._html_data = None
+        self._local_link = 'http://{}:{}'.format(*LOCAL_ADDR)
+        self._target_link = '{}://{}'.format(socket.getservbyport(
+            TARGET_ADDR[1]), TARGET_ADDR[0])
+        super().__init__(*args, **kwargs)
 
     def handle(self):
         headers = Headers.from_rfile(self.rfile)
@@ -181,20 +225,31 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 self.wfile.write(chunk)
 
     def modify_data(self, data):
-        data = self.fix_links(data)
-        data = self.wrap_words(data)
-        return data
+        parser = ProxyHTMLParser(
+            callbacks={
+                'a': self.fix_link,
+                'data': self.wrap_words
+            }
+        )
+        self._html_data = data.splitlines()
+        parser.feed(data)
+        return '\n'.join(self._html_data)
 
-    @staticmethod
-    def fix_links(data):
-        link = '{}://{}'.format(socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
-        pattern = r'(<[^<>]*)({})([^<>]*>)'.format(re.escape(link))
-        repl = r'\g<1>http://{}:{}\g<3>'.format(*LOCAL_ADDR)
-        return re.sub(pattern, repl, data, flags=re.I)
+    def fix_link(self, attrs, lineno, start_pos, end_pos):
+        attrs = dict(attrs)
+        if 'href' in attrs and self._target_link in attrs['href']:
+            attrs['href'] = attrs['href'].replace(self._target_link, self._local_link)
+            attrs_string = ' '.join('{}="{}"'.format(k, v) for k, v in attrs.items())
+            link = '<a {}>'.format(attrs_string)
+            line = self._html_data[lineno - 1]
+            self._html_data[lineno - 1] = line[:start_pos] + link + line[end_pos:]
 
-    def wrap_words(self, data):
+    def wrap_words(self, data, lineno, start_pos):
+        pass
+
+    # def wrap_words(self, data):
         # re.sub(b'>([^<>\s]{6})<', 'repl', 'string')
-        return data
+        # return data
 
 
 def main():
