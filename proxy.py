@@ -289,9 +289,9 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         start_pos += offset
         if end_pos:
             end_pos += offset
-            self_offset = line_length - (end_pos - start_pos)
-            if self_offset:
-                self._html_offsets[index] += self_offset
+            new_offset = line_length - (end_pos - start_pos)
+            if new_offset:
+                self._html_offsets[index] += new_offset
         else:
             end_pos = len(self._html_data[index])
         return start_pos, end_pos
