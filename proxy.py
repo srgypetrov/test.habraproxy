@@ -1,17 +1,21 @@
 import gzip
 import logging
+import re
 import socket
 import socketserver
 import ssl
 
-from collections import UserDict
+from collections import UserDict, defaultdict
 from contextlib import contextmanager
 from copy import copy
 from html.parser import HTMLParser
 
-
-LOCAL_ADDR = ('localhost', 9999)
+LOCAL_ADDR = ('localhost', 9090)
 TARGET_ADDR = ('habrahabr.ru', 443)
+
+
+class ResponseError(Exception):
+    pass
 
 
 class ProxyHTMLParser(HTMLParser):
@@ -22,37 +26,43 @@ class ProxyHTMLParser(HTMLParser):
         self.starttag_end_index = 0
         self.callbacks = callbacks or {}
 
-    def handle_starttag(self, tag, attrs):
-        if tag in ('script', 'style'):
-            self.data_enabled = False
-        if tag in self.callbacks:
-            lineno, start_pos, end_pos = self.get_pos(with_end=True)
-            self.callbacks[tag](attrs, lineno, start_pos, end_pos)
+    def get_data_pos(self, data):
+        start_lineno, start_pos = self.getpos()
+        lines_count = data.count('\n')
+        if lines_count:
+            end_lineno = start_lineno + lines_count
+            end_pos = len(data.splitlines()[-1])
+        else:
+            end_lineno = start_lineno
+            end_pos = start_pos + len(data)
+        return start_lineno, start_pos, end_lineno, end_pos
+
+    def get_starttag_pos(self):
+        start_lineno, start_pos = self.getpos()
+        end_lineno = self.rawdata.count('\n', 0, self.starttag_end_index) + 1
+        line_index = self.rawdata.rindex('\n', 0, self.starttag_end_index) + 1
+        end_pos = self.starttag_end_index - line_index
+        return start_lineno, start_pos, end_lineno, end_pos
 
     def handle_data(self, data):
         if 'data' in self.callbacks and self.data_enabled and data.strip():
-            lineno, start_pos = self.get_pos()
-            self.callbacks['data'](data, lineno, start_pos)
+            pos = self.get_data_pos(data)
+            self.callbacks['data'](data, *pos)
 
     def handle_endtag(self, tag):
         if tag in ('script', 'style'):
             self.data_enabled = True
 
-    def get_pos(self, with_end=False):
-        lineno, start_pos = self.getpos()
-        if with_end:
-            line_index = self.rawdata.rindex('\n', 0, self.starttag_end_index) + 1
-            end_pos = self.starttag_end_index - line_index
-            return lineno, start_pos, end_pos
-        return lineno, start_pos
+    def handle_starttag(self, tag, attrs):
+        if tag in ('script', 'style'):
+            self.data_enabled = False
+        if tag in self.callbacks:
+            pos = self.get_starttag_pos()
+            self.callbacks[tag](attrs, *pos)
 
     def parse_starttag(self, i):
         self.starttag_end_index = self.check_for_whole_start_tag(i)
         return super().parse_starttag(i)
-
-
-class ResponseError(Exception):
-    pass
 
 
 class Headers(UserDict):
@@ -207,6 +217,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def __init__(self, *args, **kwargs):
         self._html_data = None
+        self._html_offsets = defaultdict(int)
         self._local_link = 'http://{}:{}'.format(*LOCAL_ADDR)
         self._target_link = '{}://{}'.format(socket.getservbyport(
             TARGET_ADDR[1]), TARGET_ADDR[0])
@@ -235,21 +246,55 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         parser.feed(data)
         return '\n'.join(self._html_data)
 
-    def fix_link(self, attrs, lineno, start_pos, end_pos):
+    def fix_link(self, attrs, start_lineno, start_pos, end_lineno, end_pos):
         attrs = dict(attrs)
         if 'href' in attrs and self._target_link in attrs['href']:
             attrs['href'] = attrs['href'].replace(self._target_link, self._local_link)
             attrs_string = ' '.join('{}="{}"'.format(k, v) for k, v in attrs.items())
             link = '<a {}>'.format(attrs_string)
-            line = self._html_data[lineno - 1]
-            self._html_data[lineno - 1] = line[:start_pos] + link + line[end_pos:]
+            if start_lineno != end_lineno:
+                lines = [link] + [''] * (end_lineno - start_lineno)
+                self.replace_lines(lines, start_lineno, start_pos, end_lineno, end_pos)
+            else:
+                self.replace_line(link, start_lineno, start_pos, end_pos)
 
-    def wrap_words(self, data, lineno, start_pos):
-        pass
+    def wrap_words(self, data, start_lineno, start_pos, end_lineno, end_pos):
+        fixed_data, count = re.subn(r'(\b\w{6}\b)', r'\1' + '\u2122', data)
+        if count:
+            if start_lineno != end_lineno:
+                lines = fixed_data.splitlines()
+                self.replace_lines(lines, start_lineno, start_pos, end_lineno, end_pos)
+            else:
+                self.replace_line(fixed_data, start_lineno, start_pos, end_pos)
 
-    # def wrap_words(self, data):
-        # re.sub(b'>([^<>\s]{6})<', 'repl', 'string')
-        # return data
+    def replace_lines(self, lines, start_lineno, start_pos, end_lineno, end_pos):
+        for i, item in enumerate(lines):
+            lineno = start_lineno + i
+            if lineno == start_lineno:
+                self.replace_line(item, lineno, start_pos=start_pos)
+            elif lineno == end_lineno:
+                self.replace_line(item, lineno, end_pos=end_pos)
+            else:
+                self.replace_line(item, lineno)
+
+    def replace_line(self, line, lineno, start_pos=0, end_pos=0):
+        index = lineno - 1
+        start_pos, end_pos = self.calculate_offset(len(line), index, start_pos, end_pos)
+        begin = self._html_data[index][:start_pos]
+        end = self._html_data[index][end_pos:]
+        self._html_data[index] = begin + line + end
+
+    def calculate_offset(self, line_length, index, start_pos, end_pos):
+        offset = self._html_offsets.get(index, 0)
+        start_pos += offset
+        if end_pos:
+            end_pos += offset
+            self_offset = line_length - (end_pos - start_pos)
+            if self_offset:
+                self._html_offsets[index] += self_offset
+        else:
+            end_pos = len(self._html_data[index])
+        return start_pos, end_pos
 
 
 def main():
