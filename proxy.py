@@ -10,8 +10,11 @@ from contextlib import contextmanager
 from copy import copy
 from html.parser import HTMLParser
 
-LOCAL_ADDR = ('localhost', 9090)
+LOCAL_ADDR = ('localhost', 9999)
 TARGET_ADDR = ('habrahabr.ru', 443)
+
+LOCAL_LINK = 'http://{}:{}'.format(*LOCAL_ADDR)
+TARGET_LINK = '{}://{}'.format(socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
 
 
 class ResponseError(Exception):
@@ -67,8 +70,8 @@ class ProxyHTMLParser(HTMLParser):
 
 class Headers(UserDict):
 
-    def __init__(self, headers_list):
-        super().__init__()
+    def __init__(self, headers_list, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         for line in headers_list:
             line = line.decode('utf8')
             if ':' in line:
@@ -79,11 +82,9 @@ class Headers(UserDict):
 
     def __bytes__(self):
         lines = []
+        lines.append(self.pop('general'))
         for key, value in self.items():
-            if key == 'general':
-                line = value
-            else:
-                line = '{}: {}'.format(key, value)
+            line = '{}: {}'.format(key, value)
             lines.append(line)
         lines.append('\r\n')
         return '\r\n'.join(lines).encode('utf8')
@@ -150,6 +151,11 @@ class Request(object):
         wfile.close()
         ssl_sock.close()
 
+    @property
+    def path(self):
+        general = self.headers['general'].split()
+        return general[1]
+
 
 class Response(object):
 
@@ -159,6 +165,7 @@ class Response(object):
         self.packed_data = data
         self.chunks_count = chunks_count
         self.unpack_data()
+        self.fix_redirect()
 
     def __iter__(self):
         yield bytes(self.headers)
@@ -176,6 +183,12 @@ class Response(object):
     def data(self, value):
         self._data = value
         self.pack_data()
+
+    def fix_redirect(self):
+        if self.status in (301, 302):
+            location = self.headers['Location']
+            if TARGET_LINK in location:
+                self.headers['Location'] = location.replace(TARGET_LINK, LOCAL_LINK)
 
     def get_chunk(self, part_slice):
         chunk_data = self.packed_data[part_slice]
@@ -207,6 +220,11 @@ class Response(object):
         if self.is_gzipped_html():
             self.packed_data = gzip.compress(self.data.encode('utf8'))
 
+    @property
+    def status(self):
+        general = self.headers['general'].split()
+        return int(general[1])
+
     def unpack_data(self):
         if self.is_gzipped_html():
             data = gzip.decompress(self.packed_data)
@@ -215,18 +233,21 @@ class Response(object):
 
 class ProxyHandler(socketserver.StreamRequestHandler):
 
+    blacklist = {
+        '/auth/login/?checklogin=true': '/'  # disable auto redirect when user is logged in
+    }
+
     def __init__(self, *args, **kwargs):
         self._html_data = None
         self._html_offsets = defaultdict(int)
-        self._local_link = 'http://{}:{}'.format(*LOCAL_ADDR)
-        self._target_link = '{}://{}'.format(socket.getservbyport(
-            TARGET_ADDR[1]), TARGET_ADDR[0])
         super().__init__(*args, **kwargs)
 
     def handle(self):
         headers = Headers.from_rfile(self.rfile)
         if headers:
             request = Request(headers)
+            if request.path in self.blacklist:
+                return self.handle_disabled_path(request.path)
             logging.debug(request.headers['general'])
             response = request.make_request()
             logging.debug(response.headers['general'])
@@ -234,6 +255,15 @@ class ProxyHandler(socketserver.StreamRequestHandler):
                 response.data = self.modify_data(response.data)
             for chunk in response:
                 self.wfile.write(chunk)
+
+    def handle_disabled_path(self, path):
+        logging.info('Cancelled: %s', path)
+        redirect_path = self.blacklist[path]
+        if redirect_path is not None:
+            logging.info('Redirect to: %s', redirect_path)
+            headers = Headers([], general='HTTP/1.1 302 Found', Location=redirect_path)
+            self.wfile.write(bytes(headers))
+        return
 
     def modify_data(self, data):
         parser = ProxyHTMLParser(
@@ -248,8 +278,8 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def fix_link(self, attrs, start_lineno, start_pos, end_lineno, end_pos):
         attrs = dict(attrs)
-        if 'href' in attrs and self._target_link in attrs['href']:
-            attrs['href'] = attrs['href'].replace(self._target_link, self._local_link)
+        if 'href' in attrs and TARGET_LINK in attrs['href']:
+            attrs['href'] = attrs['href'].replace(TARGET_LINK, LOCAL_LINK)
             attrs_string = ' '.join('{}="{}"'.format(k, v) for k, v in attrs.items())
             link = '<a {}>'.format(attrs_string)
             if start_lineno != end_lineno:
@@ -304,7 +334,7 @@ def main():
         level=logging.DEBUG,
         handlers=[logging.StreamHandler()]
     )
-    print('Starting proxy server at http://{}:{}/'.format(*LOCAL_ADDR),
+    print('Starting proxy server at {}/'.format(LOCAL_LINK),
           'Quit the server with CONTROL-C.', sep='\n', end='\n\n')
     try:
         server.serve_forever()
