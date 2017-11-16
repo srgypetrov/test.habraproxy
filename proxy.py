@@ -14,7 +14,8 @@ LOCAL_ADDR = ('localhost', 9999)
 TARGET_ADDR = ('habrahabr.ru', 443)
 
 LOCAL_LINK = 'http://{}:{}'.format(*LOCAL_ADDR)
-TARGET_LINK = '{}://{}'.format(socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
+TARGET_LINK = '{}://{}'.format(
+    socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
 
 
 class ResponseError(Exception):
@@ -188,7 +189,8 @@ class Response(object):
         if self.status in (301, 302):
             location = self.headers['Location']
             if TARGET_LINK in location:
-                self.headers['Location'] = location.replace(TARGET_LINK, LOCAL_LINK)
+                self.headers['Location'] = location.replace(TARGET_LINK,
+                                                            LOCAL_LINK)
 
     def get_chunk(self, part_slice):
         chunk_data = self.packed_data[part_slice]
@@ -213,7 +215,8 @@ class Response(object):
 
     def is_gzipped_html(self):
         gzipped = self.headers.get('Content-Encoding') == 'gzip'
-        is_html = self.headers.get('Content-Type') == 'text/html; charset=UTF-8'
+        is_html = self.headers.get(
+            'Content-Type') == 'text/html; charset=UTF-8'
         return gzipped and is_html and self.packed_data is not None
 
     def pack_data(self):
@@ -234,7 +237,8 @@ class Response(object):
 class ProxyHandler(socketserver.StreamRequestHandler):
 
     blacklist = {
-        '/auth/login/?checklogin=true': '/'  # disable auto redirect when user is logged in
+        # disable auto redirect when user is logged in
+        '/auth/login/?checklogin=true': '/'
     }
 
     def __init__(self, *args, **kwargs):
@@ -261,7 +265,8 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         redirect_path = self.blacklist[path]
         if redirect_path is not None:
             logging.info('Redirect to: %s', redirect_path)
-            headers = Headers([], general='HTTP/1.1 302 Found', Location=redirect_path)
+            headers = Headers([], general='HTTP/1.1 302 Found',
+                              Location=redirect_path)
             self.wfile.write(bytes(headers))
         return
 
@@ -280,11 +285,13 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         attrs = dict(attrs)
         if 'href' in attrs and TARGET_LINK in attrs['href']:
             attrs['href'] = attrs['href'].replace(TARGET_LINK, LOCAL_LINK)
-            attrs_string = ' '.join('{}="{}"'.format(k, v) for k, v in attrs.items())
+            attrs_string = ' '.join('{}="{}"'.format(k, v)
+                                    for k, v in attrs.items())
             link = '<a {}>'.format(attrs_string)
             if start_lineno != end_lineno:
                 lines = [link] + [''] * (end_lineno - start_lineno)
-                self.replace_lines(lines, start_lineno, start_pos, end_lineno, end_pos)
+                self.replace_lines(lines, start_lineno,
+                                   start_pos, end_lineno, end_pos)
             else:
                 self.replace_line(link, start_lineno, start_pos, end_pos)
 
@@ -293,11 +300,13 @@ class ProxyHandler(socketserver.StreamRequestHandler):
         if count:
             if start_lineno != end_lineno:
                 lines = fixed_data.splitlines()
-                self.replace_lines(lines, start_lineno, start_pos, end_lineno, end_pos)
+                self.replace_lines(lines, start_lineno,
+                                   start_pos, end_lineno, end_pos)
             else:
                 self.replace_line(fixed_data, start_lineno, start_pos, end_pos)
 
-    def replace_lines(self, lines, start_lineno, start_pos, end_lineno, end_pos):
+    def replace_lines(self, lines, start_lineno, start_pos,
+                      end_lineno, end_pos):
         for i, item in enumerate(lines):
             lineno = start_lineno + i
             if lineno == start_lineno:
@@ -309,7 +318,8 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def replace_line(self, line, lineno, start_pos=0, end_pos=0):
         index = lineno - 1
-        start_pos, end_pos = self.calculate_offset(len(line), index, start_pos, end_pos)
+        start_pos, end_pos = self.calculate_offset(
+            len(line), index, start_pos, end_pos)
         begin = self._html_data[index][:start_pos]
         end = self._html_data[index][end_pos:]
         self._html_data[index] = begin + line + end
