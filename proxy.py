@@ -18,10 +18,6 @@ TARGET_LINK = '{}://{}'.format(
     socket.getservbyport(TARGET_ADDR[1]), TARGET_ADDR[0])
 
 
-class ResponseError(Exception):
-    pass
-
-
 class ProxyHTMLParser(HTMLParser):
 
     def __init__(self, callbacks=None, *args, **kwargs):
@@ -205,9 +201,7 @@ class Response(object):
                     yield self.get_chunk(slice(i, None))
                     break
                 yield self.get_chunk(slice(i, i + chunk_size))
-            yield b'0\r\n\r\n'
-        else:
-            raise ResponseError('Content not chunked')
+            yield self.get_chunk(slice(0))
 
     def is_chunked(self):
         chunked = self.headers.get('Transfer-Encoding') == 'chunked'
