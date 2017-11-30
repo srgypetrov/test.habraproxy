@@ -5,7 +5,9 @@ from .handler import ProxyHandler
 from .settings import settings
 
 
-def run_server():
+def run_server(port):
+    if port is not None:
+        settings.change_local_port(port)
     server = socketserver.TCPServer(settings.local_addr, ProxyHandler)
     logging.basicConfig(
         format='%(message)s | %(asctime)s | %(levelname)s',

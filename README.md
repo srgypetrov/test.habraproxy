@@ -3,7 +3,7 @@
 ```
 usage: runserver.py [-h] [--port [PORT]]
 
-Habraproxy.
+Habraproxy
 
 optional arguments:
   -h, --help     show this help message and exit

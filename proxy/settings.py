@@ -1,19 +1,12 @@
-import argparse
 import socket
-
-
-def parse_args():
-    parser = argparse.ArgumentParser(description='Habraproxy.')
-    parser.add_argument('--port', type=int, nargs='?', default=9090,
-                        const=9090, help='local port for proxy server')
-    return parser.parse_args()
 
 
 class Settings(object):
 
-    def __init__(self, port, *args, **kwargs):
-        self.local_addr = ('localhost', port)
-        self.target_addr = ('habrahabr.ru', 443)
+    local_addr = ('localhost', 9090)
+    target_addr = ('habrahabr.ru', 443)
+
+    def __init__(self, *args, **kwargs):
         self.data = dict(**kwargs)
 
     def __getattr__(self, name):
@@ -29,6 +22,8 @@ class Settings(object):
             socket.getservbyport(self.target_addr[1]), self.target_addr[0]
         )
 
+    def change_local_port(self, port):
+        self.local_addr = (self.local_addr[0], port)
 
-_args = parse_args()
-settings = Settings(_args.port)
+
+settings = Settings()
