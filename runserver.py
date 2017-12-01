@@ -4,7 +4,7 @@ from proxy.server import run_server
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Habraproxy')
+    parser = argparse.ArgumentParser(description='Simple http proxy server')
     parser.add_argument('-l', '--local-port', type=int, nargs='?',
                         metavar='PORT', help='proxy server local port')
     parser.add_argument('-t', '--target-host', type=str, nargs='?',

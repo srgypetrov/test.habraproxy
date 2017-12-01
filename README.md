@@ -1,11 +1,13 @@
-Зависимости отсутствуют, контент страницы модифицируется только при наличии заголовков `Content-Encoding: gzip` и `Content-Type: text/html; charset=utf-8` в ответе.
+Зависимости отсутствуют. Контент страницы модифицируется только при наличии следующих заголовков в ответе:
+ * `Content-Encoding: gzip`
+ * `Content-Type: text/html; charset=utf-8`
 
 Справка по использованию:
 
 ```
 usage: runserver.py [-h] [-l [PORT]] [-t [HOST]] [-p [PORT]]
 
-Habraproxy
+Simple http proxy server
 
 optional arguments:
   -h, --help            show this help message and exit
