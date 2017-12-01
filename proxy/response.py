@@ -1,11 +1,13 @@
 import gzip
+import socket
+from urllib.parse import urlparse
 
 from .settings import settings
 
 
 class Response(object):
 
-    html_content_type = 'text/html; charset=UTF-8'
+    html_content_type = 'text/html; charset=utf-8'
 
     def __init__(self, headers, packed_data=None, chunks_count=0):
         self._data = None
@@ -13,7 +15,7 @@ class Response(object):
         self.packed_data = packed_data
         self.chunks_count = chunks_count
         self.unpack_data()
-        self.fix_redirect()
+        self.handle_redirect()
 
     def __iter__(self):
         yield bytes(self.headers)
@@ -32,13 +34,15 @@ class Response(object):
         self._data = value
         self.pack_data()
 
-    def fix_redirect(self):
+    def handle_redirect(self):
         if self.status in (301, 302):
             location = self.headers['Location']
-            if settings.target_link in location:
-                self.headers['Location'] = location.replace(
-                    settings.target_link, settings.local_link
-                )
+            url = urlparse(location)
+            settings.update(target_port=socket.getservbyname(url.scheme),
+                            target_host=url.hostname)
+            self.headers['Location'] = location.replace(
+                settings.target_link, settings.local_link
+            )
 
     def get_chunk(self, part_slice):
         chunk_data = self.packed_data[part_slice]
@@ -56,12 +60,15 @@ class Response(object):
             yield self.get_chunk(slice(0))
 
     def is_chunked(self):
-        chunked = self.headers.get('Transfer-Encoding') == 'chunked'
+        transfer_encoding = self.headers.get('Transfer-Encoding', '')
+        chunked = transfer_encoding.lower() == 'chunked'
         return chunked and self.packed_data is not None
 
     def is_gzipped_html(self):
-        gzipped = self.headers.get('Content-Encoding') == 'gzip'
-        is_html = self.headers.get('Content-Type') == self.html_content_type
+        content_encoding = self.headers.get('Content-Encoding', '')
+        content_type = self.headers.get('Content-Type', '')
+        gzipped = content_encoding.lower() == 'gzip'
+        is_html = content_type.lower() == self.html_content_type
         return gzipped and is_html and self.packed_data is not None
 
     def pack_data(self):
