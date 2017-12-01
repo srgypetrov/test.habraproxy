@@ -13,7 +13,7 @@ class Request(object):
 
     def __init__(self, request_headers):
         self.headers = copy(request_headers)
-        self.headers['Host'] = settings.target_addr[0]
+        self.headers['Host'] = settings.target_host
 
     @staticmethod
     def get_data(response_headers, rfile):
