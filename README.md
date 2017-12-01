@@ -1,14 +1,32 @@
-Зависимости отсутствуют, порт по умолчанию - `9090`. Справка по использованию:
+Зависимости отсутствуют, контент страницы модифицируется только при наличии заголовков `Content-Encoding: gzip` и `Content-Type: text/html; charset=utf-8` в ответе.
+
+Справка по использованию:
 
 ```
-usage: runserver.py [-h] [--port [PORT]]
+usage: runserver.py [-h] [-l [PORT]] [-t [HOST]] [-p [PORT]]
 
 Habraproxy
 
 optional arguments:
-  -h, --help     show this help message and exit
-  --port [PORT]  local port for proxy server
+  -h, --help            show this help message and exit
+  -l [PORT], --local-port [PORT]
+                        proxy server local port
+  -t [HOST], --target-host [HOST]
+                        proxy server target host name
+  -p [PORT], --target-port [PORT]
+                        proxy server target port.
 
+```
+
+Значения по умолчанию:
+  * local-port - `9090`
+  * target-host - `habrahabr.ru`
+  * target-port - `443`
+
+Пример использования:
+
+```
+python runserver.py -l 9999 -t django-rest-framework.org -p 80
 ```
 
 # Задание

@@ -4,21 +4,18 @@ import socketserver
 from .headers import Headers
 from .modifier import Modifier
 from .request import Request
+from .settings import settings
 
 
 class ProxyHandler(socketserver.StreamRequestHandler):
 
-    blacklist = {
-        # disable auto redirect when user is logged in
-        '/auth/login/?checklogin=true': '/'
-    }
     redirect_header = 'HTTP/1.1 302 Found'
 
     def handle(self):
         headers = Headers.from_rfile(self.rfile)
         if headers:
             request = Request(headers)
-            if request.path in self.blacklist:
+            if request.path in settings.blacklist:
                 return self.handle_disabled_path(request.path)
             logging.debug(request.headers['general'])
             response = request.make_request()
@@ -31,7 +28,7 @@ class ProxyHandler(socketserver.StreamRequestHandler):
 
     def handle_disabled_path(self, path):
         logging.info('Cancelled: %s', path)
-        redirect_path = self.blacklist[path]
+        redirect_path = settings.blacklist[path]
         if redirect_path is not None:
             logging.info('Redirect to: %s', redirect_path)
             headers = Headers([], general=self.redirect_header,

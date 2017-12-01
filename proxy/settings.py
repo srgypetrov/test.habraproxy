@@ -7,7 +7,11 @@ class Settings(object):
         'target_host': 'habrahabr.ru',
         'local_host': 'localhost',
         'target_port': 443,
-        'local_port': 9090
+        'local_port': 9090,
+        'blacklist': {
+            # disable auto redirect when user is logged in
+            '/auth/login/?checklogin=true': '/'
+        }
     }
 
     def __init__(self):
@@ -36,6 +40,10 @@ class Settings(object):
         return '{}://{}'.format(
             socket.getservbyport(self.target_addr[1]), self.target_addr[0]
         )
+
+    @property
+    def is_secure(self):
+        return self.target_port == 443
 
 
 settings = Settings()

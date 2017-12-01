@@ -14,6 +14,7 @@ class Request(object):
     def __init__(self, request_headers):
         self.headers = copy(request_headers)
         self.headers['Host'] = settings.target_host
+        self.headers['Accept-Encoding'] = 'gzip'
 
     @staticmethod
     def get_data(response_headers, rfile):
@@ -51,14 +52,15 @@ class Request(object):
     @contextmanager
     def get_rfile():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ssl_sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)
-        ssl_sock.connect(settings.target_addr)
-        rfile = ssl_sock.makefile('rb')
-        wfile = socketserver._SocketWriter(ssl_sock)
+        if settings.is_secure:
+            sock = ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLSv1)
+        sock.connect(settings.target_addr)
+        rfile = sock.makefile('rb')
+        wfile = socketserver._SocketWriter(sock)
         yield rfile, wfile
         rfile.close()
         wfile.close()
-        ssl_sock.close()
+        sock.close()
 
     @property
     def path(self):
