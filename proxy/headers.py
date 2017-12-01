@@ -13,10 +13,11 @@ class Headers(UserDict):
 
     def __bytes__(self):
         lines = []
-        lines.append(self.pop('general'))
+        lines.append(self['general'])
         for key, value in self.items():
-            line = '{}: {}'.format(key, value)
-            lines.append(line)
+            if key != 'general':
+                line = '{}: {}'.format(key, value)
+                lines.append(line)
         lines.append('\r\n')
         return '\r\n'.join(lines).encode('utf8')
 
