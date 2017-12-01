@@ -5,13 +5,11 @@ class Headers(UserDict):
 
     def __init__(self, headers_list, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        if headers_list:
+            self['general'] = headers_list.pop(0).strip()
         for line in headers_list:
-            line = line.decode('utf8')
-            if ':' in line:
-                key, value = line.split(':', maxsplit=1)
-                self[key] = value.strip()
-            else:
-                self['general'] = line.strip()
+            key, value = line.split(':', maxsplit=1)
+            self[key] = value.strip()
 
     def __bytes__(self):
         lines = []
@@ -29,5 +27,5 @@ class Headers(UserDict):
             received = rfile.readline()
             if not received or received == b'\r\n':
                 break
-            header_list.append(received)
+            header_list.append(received.decode('utf8'))
         return cls(header_list)
